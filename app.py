@@ -59,7 +59,7 @@ st.markdown(
 # Configuration and Physical Constants
 # ================================
 num_electrons = 5
-n_frames = 50  # Total number of animation frames
+n_frames = 45  # Total number of animation frames
 electron_size = 8
 
 hbar = 1.0545718e-34      # Reduced Planck constant (J·s)
