@@ -32,11 +32,11 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
     """
     Generate 3-phase 3D trajectories for electrons.
     
-    Phase 1 (frames 0 to p1): Approach – move linearly from x=-2 to 0 (with small noise).
-    Phase 2 (frames p1 to p2): In-barrier – progress slowly from x=0 to x=L.
+    Phase 1 (frames 0 to p1): Approach – from x=-2 to 0.
+    Phase 2 (frames p1 to p2): In-barrier – from x=0 to x=L.
     Phase 3 (frames p2 to _n_frames): 
-      - If transmitted: move from x=L to 4.
-      - If reflected: move from x=0 back to -2.
+      - If transmitted: from x=L to 4.
+      - If reflected: from x=0 to -2.
     """
     T = calculate_T(E, V0, L)
     outcomes = np.random.rand(num_electrons) < T  # True means transmitted
@@ -53,6 +53,7 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
             traj[t] = [x, y, z]
         # Phase 2: Crossing the barrier from x = 0 to L.
         for t in range(p1, p2):
+            # Slow progression through barrier with slight variability.
             x = 0 + (L - 0) * ((t - p1) / (p2 - p1)) * np.random.uniform(0.9, 1.1) + np.random.normal(0, 0.05)
             y = np.random.normal(0, 0.05)
             z = np.random.normal(0, 0.05)
@@ -76,10 +77,10 @@ def create_3d_figure(E, V0, L):
     trajectories, outcomes, T_val = simulate_trajectories(E, V0, L)
     colors = ['#4CAF50' if o else '#F44336' for o in outcomes]
     
-    # --- Define the dynamic barrier trace ---
-    # Let barrier length = L (from x=0 to x=L) and its height scale with V0.
-    barrier_height = max(0.5, V0 * 0.3)  # Ensure a minimum height
-    barrier_width = 1  # Fixed width in z
+    # --- Define the barrier trace ---
+    # Barrier dimensions: x from 0 to L, y dimension scales with V0, fixed z width.
+    barrier_height = max(0.5, V0 * 0.3)  # Ensure a minimum barrier height
+    barrier_width = 1  # Fixed width along z-axis
     barrier_x = [0, 0, 0, 0, L, L, L, L]
     barrier_y = [-barrier_height, -barrier_height, barrier_height, barrier_height,
                  -barrier_height, -barrier_height, barrier_height, barrier_height]
@@ -94,10 +95,10 @@ def create_3d_figure(E, V0, L):
         k=[2, 4, 5, 2, 7, 7, 5, 3, 7, 5, 4, 1],
         color="#8B4513",  # Brown color for the barrier
         opacity=0.8,
-        name=f'Barrier (L={L} nm, Height={barrier_height:.2f})'
+        name=f'Barrier (L={L}nm, Height={barrier_height:.2f})'
     )
     
-    # --- Create the base electron traces (full trajectory) ---
+    # --- Create the base figure with barrier and static electron traces ---
     electron_traces = []
     for i in range(num_electrons):
         trace = go.Scatter3d(
@@ -112,7 +113,6 @@ def create_3d_figure(E, V0, L):
         )
         electron_traces.append(trace)
     
-    # Build the base figure with the barrier and the electron traces.
     base_data = [barrier_trace] + electron_traces
     fig = go.Figure(data=base_data)
     
@@ -121,7 +121,6 @@ def create_3d_figure(E, V0, L):
     for k in range(n_frames):
         frame_electrons = []
         for i in range(num_electrons):
-            # For each electron, show the path up to frame k.
             trace = go.Scatter3d(
                 x=trajectories[i][:k+1, 0],
                 y=trajectories[i][:k+1, 1],
@@ -132,12 +131,11 @@ def create_3d_figure(E, V0, L):
                 opacity=0.9
             )
             frame_electrons.append(trace)
-        # Each frame must include the barrier trace as well.
         frame_data = [barrier_trace] + frame_electrons
         frames.append(go.Frame(data=frame_data, name=str(k)))
     fig.frames = frames
     
-    # --- Update layout: improve play button readability and add a slider ---
+    # --- Update layout: improve play button readability and add slider ---
     fig.update_layout(
         title=dict(
             text=f"Quantum Tunneling Simulation<br>E={E:.1f} eV, V₀={V0:.1f} eV, T={T_val:.3f}",
@@ -163,10 +161,10 @@ def create_3d_figure(E, V0, L):
             buttons=[dict(
                 label="▶ Play",
                 method="animate",
-                args=[None, {"frame": {"duration": 70}, "fromcurrent": True}],
-                font=dict(color="white", size=14),
-                bgcolor="rgba(0,0,0,0.8)"
-            )]
+                args=[None, {"frame": {"duration": 70}, "fromcurrent": True}]
+            )],
+            font=dict(color="white", size=14),  # Moved styling here (at updatemenus level)
+            bgcolor="rgba(0,0,0,0.8)"
         )],
         sliders=[dict(
             steps=[dict(
