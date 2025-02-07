@@ -1,26 +1,24 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # Configuration
 num_electrons = 5
-n_frames = 45  # Reduced for better performance
-trail_length = 10
+n_frames = 45  # Total number of animation frames
 electron_size = 8
 
 # Physical constants
-hbar = 1.0545718e-34
-m_e = 9.10938356e-31
-e_charge = 1.602176634e-19
+hbar = 1.0545718e-34      # Reduced Planck constant (J·s)
+m_e = 9.10938356e-31      # Electron mass (kg)
+e_charge = 1.602176634e-19  # Elementary charge (C)
 
+# --- Caching for performance ---
 @st.cache_data(show_spinner=False)
 def calculate_T(E, V0, L):
     """Calculate transmission coefficient with numerical stability."""
     E_j = E * e_charge
     V0_j = V0 * e_charge
     L_m = L * 1e-9
-    
     if E_j < V0_j:
         kappa = np.sqrt(2 * m_e * (V0_j - E_j + 1e-30)) / hbar
         T = 1 / (1 + (V0**2 * np.sinh(kappa * L_m)**2) / (4 * E * (V0 - E + 1e-30)))
@@ -31,87 +29,124 @@ def calculate_T(E, V0, L):
 
 @st.cache_data(show_spinner=False, max_entries=3)
 def simulate_trajectories(E, V0, L, _n_frames=n_frames):
-    """Generate optimized 3D trajectories with caching."""
+    """
+    Generate 3-phase 3D trajectories for electrons.
+    
+    Phase 1 (frames 0 to p1): Approach – move linearly from x=-2 to 0 (with small noise).
+    Phase 2 (frames p1 to p2): In-barrier – progress slowly from x=0 to x=L.
+    Phase 3 (frames p2 to _n_frames): 
+      - If transmitted: move from x=L to 4.
+      - If reflected: move from x=0 back to -2.
+    """
     T = calculate_T(E, V0, L)
-    outcomes = np.random.rand(num_electrons) < T
-    
+    outcomes = np.random.rand(num_electrons) < T  # True means transmitted
     trajectories = []
+    p1 = int(_n_frames * 1/3)  # e.g. 15 frames for approach
+    p2 = int(_n_frames * 2/3)  # e.g. 30 frames for barrier crossing
     for outcome in outcomes:
-        # For transmitted electrons, x goes from -2 to 4; for reflected ones, keep at -2.
-        x = np.linspace(-2, 4 if outcome else -2, _n_frames)
-        y = np.cumsum(np.random.normal(0, 0.03, _n_frames))
-        z = np.cumsum(np.random.normal(0, 0.03, _n_frames))
-        
-        # Add quantum tunneling delay effect: modify x values when within the barrier (0 to L).
-        barrier_mask = (x >= 0) & (x <= L)
-        if barrier_mask.any():
-            x[barrier_mask] = np.linspace(0, L, barrier_mask.sum()) * np.random.uniform(0.8, 1.2)
-        
-        trajectories.append(np.column_stack([x, y, z]))
-    
+        traj = np.zeros((_n_frames, 3))
+        # Phase 1: Approach from x = -2 to 0.
+        for t in range(p1):
+            x = -2 + (0 - (-2)) * (t / (p1 - 1)) + np.random.normal(0, 0.05)
+            y = np.random.normal(0, 0.05)
+            z = np.random.normal(0, 0.05)
+            traj[t] = [x, y, z]
+        # Phase 2: Crossing the barrier from x = 0 to L.
+        for t in range(p1, p2):
+            x = 0 + (L - 0) * ((t - p1) / (p2 - p1)) * np.random.uniform(0.9, 1.1) + np.random.normal(0, 0.05)
+            y = np.random.normal(0, 0.05)
+            z = np.random.normal(0, 0.05)
+            traj[t] = [x, y, z]
+        # Phase 3: After the barrier.
+        for t in range(p2, _n_frames):
+            if outcome:
+                # Transmitted: from x = L to 4.
+                x = L + (4 - L) * ((t - p2) / (_n_frames - p2 - 1)) + np.random.normal(0, 0.05)
+            else:
+                # Reflected: from x = 0 to -2.
+                x = 0 + (-2 - 0) * ((t - p2) / (_n_frames - p2 - 1)) + np.random.normal(0, 0.05)
+            y = np.random.normal(0, 0.05)
+            z = np.random.normal(0, 0.05)
+            traj[t] = [x, y, z]
+        trajectories.append(traj)
     return np.array(trajectories), outcomes, T
 
 def create_3d_figure(E, V0, L):
-    """Create an optimized 3D figure for Streamlit."""
+    """Create a 3D Plotly figure for the quantum simulation."""
     trajectories, outcomes, T_val = simulate_trajectories(E, V0, L)
     colors = ['#4CAF50' if o else '#F44336' for o in outcomes]
-
-    fig = go.Figure()
     
-    # Add the barrier as a Mesh3d object.
-    fig.add_trace(go.Mesh3d(
-        x=[0, 0, 0, 0, L, L, L, L],
-        y=[-1, -1, 1, 1, -1, -1, 1, 1],
-        z=[-1, 1, -1, 1, -1, 1, -1, 1],
+    # --- Define the dynamic barrier trace ---
+    # Let barrier length = L (from x=0 to x=L) and its height scale with V0.
+    barrier_height = max(0.5, V0 * 0.3)  # Ensure a minimum height
+    barrier_width = 1  # Fixed width in z
+    barrier_x = [0, 0, 0, 0, L, L, L, L]
+    barrier_y = [-barrier_height, -barrier_height, barrier_height, barrier_height,
+                 -barrier_height, -barrier_height, barrier_height, barrier_height]
+    barrier_z = [-barrier_width, barrier_width, -barrier_width, barrier_width,
+                 -barrier_width, barrier_width, -barrier_width, barrier_width]
+    barrier_trace = go.Mesh3d(
+        x=barrier_x,
+        y=barrier_y,
+        z=barrier_z,
         i=[0, 0, 0, 1, 2, 4, 4, 6, 6, 0, 2, 3],
         j=[1, 2, 4, 3, 3, 5, 6, 7, 5, 4, 6, 7],
         k=[2, 4, 5, 2, 7, 7, 5, 3, 7, 5, 4, 1],
-        color='#607D8B',
-        opacity=0.2,
-        name=f'Barrier (L={L}nm)'
-    ))
+        color="#8B4513",  # Brown color for the barrier
+        opacity=0.8,
+        name=f'Barrier (L={L} nm, Height={barrier_height:.2f})'
+    )
     
-    # Add electron traces (initial full trajectories).
+    # --- Create the base electron traces (full trajectory) ---
+    electron_traces = []
     for i in range(num_electrons):
-        fig.add_trace(go.Scatter3d(
-            x=trajectories[i, :, 0],
-            y=trajectories[i, :, 1],
-            z=trajectories[i, :, 2],
+        trace = go.Scatter3d(
+            x=trajectories[i,:,0],
+            y=trajectories[i,:,1],
+            z=trajectories[i,:,2],
             mode='lines+markers',
             marker=dict(size=electron_size, color=colors[i]),
             line=dict(color=colors[i], width=3),
             opacity=0.9,
             name=f'Electron {i+1}'
-        ))
-
-    # Build animation frames: each frame shows the trajectory up to that index.
-    frames = [
-        go.Frame(
-            data=[
-                go.Scatter3d(
-                    x=traj[:k+1, 0],
-                    y=traj[:k+1, 1],
-                    z=traj[:k+1, 2],
-                    mode='lines+markers'
-                )
-                for traj in trajectories
-            ],
-            name=str(k)
         )
-        for k in range(n_frames)
-    ]
+        electron_traces.append(trace)
+    
+    # Build the base figure with the barrier and the electron traces.
+    base_data = [barrier_trace] + electron_traces
+    fig = go.Figure(data=base_data)
+    
+    # --- Build animation frames ---
+    frames = []
+    for k in range(n_frames):
+        frame_electrons = []
+        for i in range(num_electrons):
+            # For each electron, show the path up to frame k.
+            trace = go.Scatter3d(
+                x=trajectories[i][:k+1, 0],
+                y=trajectories[i][:k+1, 1],
+                z=trajectories[i][:k+1, 2],
+                mode='lines+markers',
+                marker=dict(size=electron_size, color=colors[i]),
+                line=dict(color=colors[i], width=3),
+                opacity=0.9
+            )
+            frame_electrons.append(trace)
+        # Each frame must include the barrier trace as well.
+        frame_data = [barrier_trace] + frame_electrons
+        frames.append(go.Frame(data=frame_data, name=str(k)))
     fig.frames = frames
     
-    # Update layout with a title, scene properties, and a Play button.
+    # --- Update layout: improve play button readability and add a slider ---
     fig.update_layout(
         title=dict(
-            text=f"Quantum Tunneling Simulation<br>E={E:.1f}eV, V0={V0}eV, T={T_val:.3f}",
+            text=f"Quantum Tunneling Simulation<br>E={E:.1f} eV, V₀={V0:.1f} eV, T={T_val:.3f}",
             x=0.05,
             font=dict(size=18)
         ),
         scene=dict(
             xaxis=dict(title="X (nm)", range=[-2, 4], backgroundcolor='rgba(240,240,240,0.8)'),
-            yaxis=dict(title="Y (nm)", range=[-2, 2], backgroundcolor='rgba(240,240,240,0.8)'),
+            yaxis=dict(title="Y (nm)", range=[-max(2, barrier_height*1.5), max(2, barrier_height*1.5)], backgroundcolor='rgba(240,240,240,0.8)'),
             zaxis=dict(title="Z (nm)", range=[-2, 2], backgroundcolor='rgba(240,240,240,0.8)'),
             camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
             aspectmode='manual',
@@ -119,11 +154,35 @@ def create_3d_figure(E, V0, L):
         ),
         updatemenus=[dict(
             type="buttons",
+            showactive=False,
+            y=1,
+            x=1.05,
+            xanchor="right",
+            yanchor="top",
+            pad=dict(t=0, r=10),
             buttons=[dict(
                 label="▶ Play",
                 method="animate",
-                args=[None, {"frame": {"duration": 70}, "fromcurrent": True}]
+                args=[None, {"frame": {"duration": 70}, "fromcurrent": True}],
+                font=dict(color="white", size=14),
+                bgcolor="rgba(0,0,0,0.8)"
             )]
+        )],
+        sliders=[dict(
+            steps=[dict(
+                method="animate",
+                args=[[str(k)],
+                      {"frame": {"duration": 70, "redraw": True},
+                       "mode": "immediate",
+                       "transition": {"duration": 0}}],
+                label=str(k)
+            ) for k in range(n_frames)],
+            active=0,
+            transition={"duration": 0},
+            x=0,
+            y=0,
+            currentvalue=dict(font=dict(size=12), prefix="Frame: ", visible=True, xanchor='center'),
+            len=1.0
         )]
     )
     
