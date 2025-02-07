@@ -2,165 +2,376 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-# Page configuration
+# --------------------------
+# Page configuration & Styling
+# --------------------------
 st.set_page_config(page_title="3D Quantum Simulator", layout="wide")
 
-# Custom CSS styling
-st.markdown("""
+# Custom CSS for an Apple-inspired aesthetic
+st.markdown(
+    """
     <style>
-    .main {background-color: #f5f5f7;}
-    .sidebar .sidebar-content {background-color: #ffffff; border-radius: 15px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);}
-    .stSlider [data-baseweb="slider"] {padding: 0px 15px;}
-    .stSlider div[data-baseweb="slider-track"] {background-color: #e0e0e0; height: 6px;}
-    .stSlider div[data-baseweb="slider-track"] > div {background-color: #007AFF; height: 6px;}
-    .stSlider div[data-baseweb="thumb"] {background-color: #007AFF; border: none; width: 16px; height: 16px;}
-    .stSlider div[data-baseweb="thumb"]:focus {box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);}
-    .card {background: white; border-radius: 10px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
-    .card h3 {font-size: 1.1rem; margin: 0 0 8px 0; color: #1d1d1f;}
-    .card p {font-size: 1.5rem; margin: 0; font-weight: bold; color: #007AFF;}
+    /* Overall page styling */
+    body {
+        background-color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .reportview-container {
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        padding: 10px;
+    }
+    /* Custom slider styling */
+    div.stSlider > div {
+        background: transparent;
+    }
+    div.stSlider input[type=range] {
+        -webkit-appearance: none;
+        width: 100%;
+        height: 6px;
+        border-radius: 5px;
+        background: #ddd;
+        outline: none;
+    }
+    div.stSlider input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #007aff;
+        cursor: pointer;
+        border: none;
+    }
+    /* Transmission coefficient card styling */
+    .transmission-card {
+        background-color: #f7f7f7;
+        border-radius: 10px;
+        padding: 10px;
+        font-size: 0.9em;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-top: 10px;
+    }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-# Constants
-m = 9.10938356e-31  # Electron mass (kg)
-hbar = 1.0545718e-34  # Reduced Planck constant (J·s)
-e_charge = 1.602176634e-19  # Elementary charge (C)
-nm_to_m = 1e-9
+# --------------------------
+# Sidebar: Simulation Parameters
+# --------------------------
+st.sidebar.title("Simulation Parameters")
+energy = st.sidebar.slider("Electron Energy (eV)", min_value=0.1, max_value=10.0, value=5.0, step=0.1)
+V0 = st.sidebar.slider("Barrier Height (eV)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+L = st.sidebar.slider("Barrier Width (nm)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
 
+# --------------------------
+# Transmission Coefficient Calculation
+# --------------------------
 @st.cache_data
-def calculate_transmission(E_eV, V0_eV, L_nm):
-    E = E_eV * e_charge
-    V0 = V0_eV * e_charge
-    L = L_nm * nm_to_m
-    
-    if E >= V0:
-        k1 = np.sqrt(2*m*E)/hbar
-        k2 = np.sqrt(2*m*(E - V0))/hbar
-        T = 1 / (1 + ((k1**2 - k2**2)/(2*k1*k2))**2 * np.sin(k2*L)**2)
+def compute_transmission(E, V0, L):
+    """
+    Computes the transmission coefficient T for a rectangular potential barrier.
+    E: electron energy in eV
+    V0: barrier height in eV
+    L: barrier width in nm
+    """
+    # Physical constants
+    m = 9.10938356e-31       # Electron mass in kg
+    hbar = 1.0545718e-34     # Reduced Planck's constant in J*s
+    eV_to_J = 1.602176634e-19  # 1 eV in Joules
+
+    # Convert units: energy in Joules, barrier width in meters
+    E_J = E * eV_to_J
+    V0_J = V0 * eV_to_J
+    L_m = L * 1e-9
+
+    if E < V0:
+        # Tunneling: exponential decay through the barrier
+        kappa = np.sqrt(2 * m * (V0_J - E_J)) / hbar
+        T = np.exp(-2 * kappa * L_m)
     else:
-        kappa = np.sqrt(2*m*(V0 - E))/hbar
-        T = 1 / (1 + (V0**2 * np.sinh(kappa*L)**2)/(4*E*(V0 - E)))
-    
-    return np.clip(T, 0.0, 1.0)
+        # Over-the-barrier transmission:
+        # Avoid division by zero if E and V0 are almost equal.
+        if abs(E_J - V0_J) < 1e-12:
+            T = 1.0
+        else:
+            k = np.sqrt(2 * m * (E_J - V0_J)) / hbar
+            T = 1 / (1 + (V0_J**2 * (np.sin(k * L_m))**2 / (4 * E_J * (E_J - V0_J))))
+    return np.clip(T, 0, 1)
 
+T_value = compute_transmission(energy, V0, L)
+
+# Display the transmission coefficient in a stylish card on the sidebar
+st.sidebar.markdown(
+    f"""
+    <div class="transmission-card">
+        <strong>Transmission Coefficient (T):</strong>
+        <p>{T_value:.3f}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --------------------------
+# Transmission vs Energy Plot
+# --------------------------
 @st.cache_data
-def simulate_trajectories(E, V0, L, T, num_electrons=5):
-    trajectories = []
-    for _ in range(num_electrons):
-        transmitted = np.random.rand() < T
-        x = np.linspace(-2, 4, 100)
-        y = np.zeros_like(x)
-        z = np.zeros_like(x)
-        
-        # Initial positions with offsets
-        y_offset = np.random.uniform(-0.2, 0.2)
-        z_offset = np.random.uniform(-0.2, 0.2)
-        
-        for i in range(len(x)):
-            if x[i] < 0:
-                y[i] = y_offset + 0.1 * np.random.randn()
-                z[i] = z_offset + 0.1 * np.random.randn()
-            elif 0 <= x[i] <= L:
-                y[i] = y_offset + 0.1 * np.random.randn()
-                z[i] = z_offset + 0.1 * np.random.randn()
-                x[i] = x[i] * L  # Scale barrier width
-            else:
-                if transmitted:
-                    y[i] = y_offset + 0.1 * np.random.randn()
-                    z[i] = z_offset + 0.1 * np.random.randn()
-                else:
-                    x[i] = -x[i]  # Reflect
-                    y[i] = y_offset + 0.1 * np.random.randn()
-                    z[i] = z_offset + 0.1 * np.random.randn()
-        
-        trajectories.append((x, y, z))
-    return trajectories
+def compute_transmission_vs_energy(V0, L):
+    energies = np.linspace(0.1, 10.0, 200)
+    T_values = np.array([compute_transmission(E, V0, L) for E in energies])
+    return energies, T_values
 
-# Sidebar controls
-with st.sidebar:
-    st.markdown("## Parameters")
-    E = st.slider("Electron Energy (eV)", 0.1, 10.0, 5.0, 0.1)
-    V0 = st.slider("Barrier Height (eV)", 0.1, 10.0, 1.0, 0.1)
-    L = st.slider("Barrier Width (nm)", 0.1, 5.0, 1.0, 0.1)
-    
-    T = calculate_transmission(E, V0, L)
-    st.markdown(f'<div class="card"><h3>Transmission Coefficient</h3><p>{T:.3f}</p></div>', 
-                unsafe_allow_html=True)
-
-# Main content
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    # T vs Energy plot
-    energies = np.linspace(0.1, 10.0, 100)
-    Ts = [calculate_transmission(e, V0, L) for e in energies]
+def transmission_vs_energy_plot(V0, L):
+    energies, T_values = compute_transmission_vs_energy(V0, L)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=energies, y=Ts, line=dict(color='#34C759', width=3)))
+    fig.add_trace(
+        go.Scatter(
+            x=energies,
+            y=T_values,
+            mode="lines",
+            line=dict(color="green", width=3),
+            name="T vs Energy",
+        )
+    )
     fig.update_layout(
-        title="Transmission Coefficient vs Energy",
-        xaxis_title="Energy (eV)",
-        yaxis_title="T",
+        title="Transmission Coefficient vs Electron Energy",
+        xaxis_title="Electron Energy (eV)",
+        yaxis_title="Transmission Coefficient",
         template="plotly_white",
-        margin=dict(t=40, b=40),
-        height=400
+        margin=dict(l=50, r=50, t=50, b=50),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    return fig
 
-with col2:
-    # 3D Visualization
-    trajectories = simulate_trajectories(E, V0, L, T)
-    
-    fig = go.Figure()
-    
-    # Add barrier
+# --------------------------
+# 3D Simulation of Quantum Tunneling
+# --------------------------
+@st.cache_data
+def simulate_trajectories(energy, V0, L, n_electrons=5, frames_phase1=20, frames_phase2=20, frames_phase3=20):
+    """
+    Simulate electron trajectories in three phases:
+      - Approach Phase: from x = -2 to 0
+      - Barrier Crossing Phase: from x = 0 to L
+      - After-Barrier Phase: transmitted electrons go from L to 4; reflected electrons go from 0 to -2.
+    Returns a list of trajectory dictionaries (one per electron) and the total number of animation frames.
+    """
+    total_frames = frames_phase1 + frames_phase2 + frames_phase3
+    trajectories = []
+    # Set seed for reproducibility
+    np.random.seed(42)
+    T_sim = compute_transmission(energy, V0, L)
+
+    for i in range(n_electrons):
+        # Unique base offsets for y and z so trajectories do not overlap
+        base_y = np.random.uniform(-0.5, 0.5)
+        base_z = np.random.uniform(-0.5, 0.5)
+
+        # Approach Phase: x from -2 to 0 with slight noise
+        x1 = np.linspace(-2, 0, frames_phase1) + np.random.normal(0, 0.05, frames_phase1)
+        y1 = base_y + np.random.normal(0, 0.02, frames_phase1)
+        z1 = base_z + np.random.normal(0, 0.02, frames_phase1)
+
+        # Barrier Crossing Phase: x from 0 to L with slight noise
+        x2 = np.linspace(0, L, frames_phase2) + np.random.normal(0, 0.05, frames_phase2)
+        y2 = base_y + np.random.normal(0, 0.02, frames_phase2)
+        z2 = base_z + np.random.normal(0, 0.02, frames_phase2)
+
+        # After-Barrier Phase: decide outcome based on transmission coefficient T
+        if np.random.rand() < T_sim:
+            # Transmitted: continue from L to 4
+            x3 = np.linspace(L, 4, frames_phase3) + np.random.normal(0, 0.05, frames_phase3)
+        else:
+            # Reflected: return from 0 to -2
+            x3 = np.linspace(0, -2, frames_phase3) + np.random.normal(0, 0.05, frames_phase3)
+        y3 = base_y + np.random.normal(0, 0.02, frames_phase3)
+        z3 = base_z + np.random.normal(0, 0.02, frames_phase3)
+
+        # Concatenate phases
+        x = np.concatenate([x1, x2, x3])
+        y = np.concatenate([y1, y2, y3])
+        z = np.concatenate([z1, z2, z3])
+
+        trajectories.append({"x": x, "y": y, "z": z})
+    return trajectories, total_frames
+
+trajectories, total_frames = simulate_trajectories(energy, V0, L)
+
+def build_3d_animation(trajectories, total_frames, V0, L, n_electrons=5):
+    """
+    Builds a Plotly 3D animation figure showing electron trajectories and the barrier.
+    Each electron displays a fading trail (using RGBA colors for lower opacity) and a fully opaque current marker.
+    The barrier is drawn as a brown Mesh3d trace.
+    """
+    # Barrier dimensions (using simulation units):
+    # x: from 0 to L, y: height scales with V0 (min 0.5, scaling factor 0.3), z: fixed width = 1
     barrier_height = max(0.5, V0 * 0.3)
-    barrier = go.Mesh3d(
-        x=[0, 0, L, L, 0, 0, L, L],
-        y=[-barrier_height, -barrier_height, -barrier_height, -barrier_height,
-           barrier_height, barrier_height, barrier_height, barrier_height],
-        z=[-0.5, 0.5, -0.5, 0.5, -0.5, 0.5, -0.5, 0.5],
-        i=[7, 0, 0, 0, 4, 4, 6, 6],
-        j=[3, 4, 1, 2, 5, 6, 5, 2],
-        k=[0, 7, 2, 3, 6, 7, 1, 1],
-        color='#A52A2A',
-        opacity=0.3,
-        flatshading=True
+    x_barrier = [0, L, L, 0, 0, L, L, 0]
+    y_barrier = [
+        -barrier_height / 2,
+        -barrier_height / 2,
+        barrier_height / 2,
+        barrier_height / 2,
+        -barrier_height / 2,
+        -barrier_height / 2,
+        barrier_height / 2,
+        barrier_height / 2,
+    ]
+    z_barrier = [-0.5, -0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5]
+    # Define faces for the barrier (each face as two triangles)
+    faces = [
+        [0, 1, 2], [0, 2, 3],  # back face (z = -0.5)
+        [4, 5, 6], [4, 6, 7],  # front face (z = 0.5)
+        [0, 1, 5], [0, 5, 4],  # bottom face (y = -barrier_height/2)
+        [2, 3, 7], [2, 7, 6],  # top face (y = barrier_height/2)
+        [1, 2, 6], [1, 6, 5],  # right face (x = L)
+        [0, 3, 7], [0, 7, 4],  # left face (x = 0)
+    ]
+    i_faces = [face[0] for face in faces]
+    j_faces = [face[1] for face in faces]
+    k_faces = [face[2] for face in faces]
+
+    # Barrier trace (static)
+    barrier_trace = go.Mesh3d(
+        x=x_barrier,
+        y=y_barrier,
+        z=z_barrier,
+        i=i_faces,
+        j=j_faces,
+        k=k_faces,
+        color="saddlebrown",
+        opacity=0.5,
+        name="Barrier",
+        showscale=False,
     )
-    fig.add_trace(barrier)
-    
-    # Add electron trajectories with fading trails
-    for idx, (x, y, z) in enumerate(trajectories):
-        for i in range(1, len(x)):
-            alpha = 0.1 + 0.9*(i/len(x))
-            fig.add_trace(go.Scatter3d(
-                x=x[:i], y=y[:i], z=z[:i],
-                mode='lines',
-                line=dict(
-                    color=f'rgba(0, 122, 255, {alpha})',  # Using RGBA for opacity
-                    width=3
-                ),
-                showlegend=False
-            ))
-    
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title='X (nm)', range=[-2, 4]),
-            yaxis=dict(title='Y', range=[-1, 1]),
-            zaxis=dict(title='Z', range=[-1, 1]),
-            aspectmode='manual',
-            aspectratio=dict(x=2, y=1, z=1)
-        ),
-        margin=dict(l=0, r=0, b=0, t=0),
-        height=600,
-        updatemenus=[dict(
-            type="buttons",
-            buttons=[dict(label="Play",
-                          method="animate",
-                          args=[None]),
+
+    # Prepare initial traces for electrons:
+    # For each electron, we create two traces: one for the trail (line) and one for the current position (marker)
+    data = [barrier_trace]
+    for traj in trajectories:
+        # Trail trace (starts with the first point) using RGBA for faded blue color.
+        data.append(
+            go.Scatter3d(
+                x=[traj["x"][0]],
+                y=[traj["y"][0]],
+                z=[traj["z"][0]],
+                mode="lines",
+                line=dict(color="rgba(0,0,255,0.3)", width=4),
+                showlegend=False,
+            )
+        )
+        # Current position trace (marker)
+        data.append(
+            go.Scatter3d(
+                x=[traj["x"][0]],
+                y=[traj["y"][0]],
+                z=[traj["z"][0]],
+                mode="markers",
+                marker=dict(color="blue", size=6),
+                showlegend=False,
+            )
+        )
+
+    # Create animation frames
+    frames = []
+    for frame_idx in range(total_frames):
+        frame_data = []
+        # For each electron, update the trail and current marker traces.
+        for traj in trajectories:
+            # Trail: all positions up to the current frame index.
+            x_trail = traj["x"][: frame_idx + 1]
+            y_trail = traj["y"][: frame_idx + 1]
+            z_trail = traj["z"][: frame_idx + 1]
+            trail_trace = go.Scatter3d(
+                x=x_trail,
+                y=y_trail,
+                z=z_trail,
+                mode="lines",
+                line=dict(color="rgba(0,0,255,0.3)", width=4),
+                showlegend=False,
+            )
+            # Current position: the latest position.
+            current_trace = go.Scatter3d(
+                x=[traj["x"][frame_idx]],
+                y=[traj["y"][frame_idx]],
+                z=[traj["z"][frame_idx]],
+                mode="markers",
+                marker=dict(color="blue", size=6),
+                showlegend=False,
+            )
+            frame_data.append(trail_trace)
+            frame_data.append(current_trace)
+        frames.append(go.Frame(data=frame_data, name=str(frame_idx)))
+
+    # Build the complete figure with animation controls.
+    fig = go.Figure(
+        data=data,
+        frames=frames,
+        layout=go.Layout(
+            title="3D Quantum Tunneling Simulation",
+            scene=dict(
+                xaxis=dict(title="X", range=[-3, 5]),
+                yaxis=dict(title="Y", range=[-2, 2]),
+                zaxis=dict(title="Z", range=[-2, 2]),
+            ),
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    buttons=[
+                        dict(
+                            label="Play",
+                            method="animate",
+                            args=[
+                                None,
+                                {
+                                    "frame": {"duration": 100, "redraw": True},
+                                    "fromcurrent": True,
+                                    "transition": {"duration": 0},
+                                },
+                            ],
+                        )
                     ],
-            x=0.1, y=0,
-            pad=dict(t=40, r=10)
-        )]
+                    x=0.1,
+                    y=0,
+                    xanchor="right",
+                    yanchor="top",
+                )
+            ],
+            sliders=[
+                {
+                    "currentvalue": {"prefix": "Frame: "},
+                    "steps": [
+                        {
+                            "method": "animate",
+                            "label": str(k),
+                            "args": [
+                                [str(k)],
+                                {
+                                    "frame": {"duration": 100, "redraw": True},
+                                    "mode": "immediate",
+                                    "transition": {"duration": 0},
+                                },
+                            ],
+                        }
+                        for k in range(total_frames)
+                    ],
+                    "x": 0.1,
+                    "y": -0.05,
+                    "len": 0.8,
+                }
+            ],
+        ),
     )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    return fig
+
+fig_3d = build_3d_animation(trajectories, total_frames, V0, L)
+
+# --------------------------
+# Main Page: Display Plots and Animation
+# --------------------------
+st.title("3D Quantum Simulator")
+st.markdown("### Transmission Coefficient vs Electron Energy")
+st.plotly_chart(transmission_vs_energy_plot(V0, L), use_container_width=True)
+
+st.markdown("### 3D Quantum Tunneling Simulation")
+st.plotly_chart(fig_3d, use_container_width=True)
