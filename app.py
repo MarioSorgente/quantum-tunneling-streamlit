@@ -32,11 +32,11 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
     """
     Generate 3-phase 3D trajectories for electrons.
     
-    Phase 1 (frames 0 to p1): Approach – from x=-2 to 0.
-    Phase 2 (frames p1 to p2): In-barrier – from x=0 to x=L.
-    Phase 3 (frames p2 to _n_frames): 
-      - If transmitted: from x=L to 4.
-      - If reflected: from x=0 to -2.
+    Phase 1: Approach from x=-2 to 0.
+    Phase 2: Crossing the barrier from x=0 to x=L.
+    Phase 3: After the barrier:
+       - If transmitted: from x=L to 4.
+       - If reflected: from x=0 to -2.
     """
     T = calculate_T(E, V0, L)
     outcomes = np.random.rand(num_electrons) < T  # True means transmitted
@@ -45,26 +45,25 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
     p2 = int(_n_frames * 2/3)  # e.g. 30 frames for barrier crossing
     for outcome in outcomes:
         traj = np.zeros((_n_frames, 3))
-        # Phase 1: Approach from x = -2 to 0.
+        # Phase 1: Approach (x from -2 to 0)
         for t in range(p1):
             x = -2 + (0 - (-2)) * (t / (p1 - 1)) + np.random.normal(0, 0.05)
             y = np.random.normal(0, 0.05)
             z = np.random.normal(0, 0.05)
             traj[t] = [x, y, z]
-        # Phase 2: Crossing the barrier from x = 0 to L.
+        # Phase 2: Crossing the barrier (x from 0 to L)
         for t in range(p1, p2):
-            # Slow progression through barrier with slight variability.
             x = 0 + (L - 0) * ((t - p1) / (p2 - p1)) * np.random.uniform(0.9, 1.1) + np.random.normal(0, 0.05)
             y = np.random.normal(0, 0.05)
             z = np.random.normal(0, 0.05)
             traj[t] = [x, y, z]
-        # Phase 3: After the barrier.
+        # Phase 3: After the barrier
         for t in range(p2, _n_frames):
             if outcome:
-                # Transmitted: from x = L to 4.
+                # Transmitted: x from L to 4
                 x = L + (4 - L) * ((t - p2) / (_n_frames - p2 - 1)) + np.random.normal(0, 0.05)
             else:
-                # Reflected: from x = 0 to -2.
+                # Reflected: x from 0 to -2
                 x = 0 + (-2 - 0) * ((t - p2) / (_n_frames - p2 - 1)) + np.random.normal(0, 0.05)
             y = np.random.normal(0, 0.05)
             z = np.random.normal(0, 0.05)
@@ -72,15 +71,32 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
         trajectories.append(traj)
     return np.array(trajectories), outcomes, T
 
+def create_probability_plot(E, V0, L):
+    """Create a bar chart showing T (green) and R (red) coefficients."""
+    T_val = calculate_T(E, V0, L)
+    R_val = 1 - T_val
+    fig = go.Figure(data=[
+        go.Bar(name="Transmission", x=["T"], y=[T_val], marker_color="#4CAF50"),
+        go.Bar(name="Reflection", x=["R"], y=[R_val], marker_color="#F44336")
+    ])
+    fig.update_layout(
+        title="Probability Coefficients",
+        yaxis=dict(range=[0, 1], title="Probability"),
+        barmode="group",
+        plot_bgcolor="rgba(240,240,240,0.8)",
+        paper_bgcolor="rgba(240,240,240,0.8)",
+        font=dict(size=14)
+    )
+    return fig
+
 def create_3d_figure(E, V0, L):
-    """Create a 3D Plotly figure for the quantum simulation."""
+    """Create a 3D Plotly figure for the quantum simulation with fading trails."""
     trajectories, outcomes, T_val = simulate_trajectories(E, V0, L)
     colors = ['#4CAF50' if o else '#F44336' for o in outcomes]
     
     # --- Define the barrier trace ---
-    # Barrier dimensions: x from 0 to L, y dimension scales with V0, fixed z width.
-    barrier_height = max(0.5, V0 * 0.3)  # Ensure a minimum barrier height
-    barrier_width = 1  # Fixed width along z-axis
+    barrier_height = max(0.5, V0 * 0.3)  # scales with V0 (minimum 0.5)
+    barrier_width = 1  # fixed z dimension
     barrier_x = [0, 0, 0, 0, L, L, L, L]
     barrier_y = [-barrier_height, -barrier_height, barrier_height, barrier_height,
                  -barrier_height, -barrier_height, barrier_height, barrier_height]
@@ -93,49 +109,75 @@ def create_3d_figure(E, V0, L):
         i=[0, 0, 0, 1, 2, 4, 4, 6, 6, 0, 2, 3],
         j=[1, 2, 4, 3, 3, 5, 6, 7, 5, 4, 6, 7],
         k=[2, 4, 5, 2, 7, 7, 5, 3, 7, 5, 4, 1],
-        color="#8B4513",  # Brown color for the barrier
+        color="#8B4513",  # Brown color
         opacity=0.8,
         name=f'Barrier (L={L}nm, Height={barrier_height:.2f})'
     )
     
-    # --- Create the base figure with barrier and static electron traces ---
-    electron_traces = []
+    # --- Prepare base traces for electrons: two traces per electron (trail and current position) ---
+    base_traces = [barrier_trace]
     for i in range(num_electrons):
-        trace = go.Scatter3d(
-            x=trajectories[i,:,0],
-            y=trajectories[i,:,1],
-            z=trajectories[i,:,2],
-            mode='lines+markers',
-            marker=dict(size=electron_size, color=colors[i]),
+        # Trail trace (initially empty)
+        trail_trace = go.Scatter3d(
+            x=[], y=[], z=[],
+            mode='lines',
             line=dict(color=colors[i], width=3),
-            opacity=0.9,
+            opacity=0.3,
+            showlegend=False
+        )
+        # Current position trace (marker)
+        current_trace = go.Scatter3d(
+            x=[trajectories[i][0, 0]],
+            y=[trajectories[i][0, 1]],
+            z=[trajectories[i][0, 2]],
+            mode='markers',
+            marker=dict(size=electron_size, color=colors[i]),
+            opacity=1.0,
             name=f'Electron {i+1}'
         )
-        electron_traces.append(trace)
-    
-    base_data = [barrier_trace] + electron_traces
-    fig = go.Figure(data=base_data)
+        base_traces.extend([trail_trace, current_trace])
+    fig = go.Figure(data=base_traces)
     
     # --- Build animation frames ---
     frames = []
     for k in range(n_frames):
-        frame_electrons = []
+        frame_data = [barrier_trace]  # always include the barrier trace
         for i in range(num_electrons):
-            trace = go.Scatter3d(
-                x=trajectories[i][:k+1, 0],
-                y=trajectories[i][:k+1, 1],
-                z=trajectories[i][:k+1, 2],
-                mode='lines+markers',
+            traj = trajectories[i]
+            # Trail: points from start up to frame k (if k>0), with fixed low opacity.
+            if k > 0:
+                trail = go.Scatter3d(
+                    x=traj[:k, 0],
+                    y=traj[:k, 1],
+                    z=traj[:k, 2],
+                    mode='lines',
+                    line=dict(color=colors[i], width=3),
+                    opacity=0.3,
+                    showlegend=False
+                )
+            else:
+                trail = go.Scatter3d(
+                    x=[], y=[], z=[],
+                    mode='lines',
+                    line=dict(color=colors[i], width=3),
+                    opacity=0.3,
+                    showlegend=False
+                )
+            # Current: the last point of the trajectory at frame k, with full opacity.
+            current = go.Scatter3d(
+                x=[traj[k, 0]],
+                y=[traj[k, 1]],
+                z=[traj[k, 2]],
+                mode='markers',
                 marker=dict(size=electron_size, color=colors[i]),
-                line=dict(color=colors[i], width=3),
-                opacity=0.9
+                opacity=1.0,
+                showlegend=False
             )
-            frame_electrons.append(trace)
-        frame_data = [barrier_trace] + frame_electrons
+            frame_data.extend([trail, current])
         frames.append(go.Frame(data=frame_data, name=str(k)))
     fig.frames = frames
     
-    # --- Update layout: improve play button readability and add slider ---
+    # --- Update layout ---
     fig.update_layout(
         title=dict(
             text=f"Quantum Tunneling Simulation<br>E={E:.1f} eV, V₀={V0:.1f} eV, T={T_val:.3f}",
@@ -150,11 +192,12 @@ def create_3d_figure(E, V0, L):
             aspectmode='manual',
             aspectratio=dict(x=2, y=1, z=1)
         ),
+        legend=dict(x=0.02, y=0.98, bgcolor='rgba(255,255,255,0.8)'),
         updatemenus=[dict(
             type="buttons",
             showactive=False,
-            y=1,
-            x=1.05,
+            y=0.9,
+            x=1.1,  # Positioned to avoid overlap with legend.
             xanchor="right",
             yanchor="top",
             pad=dict(t=0, r=10),
@@ -162,9 +205,7 @@ def create_3d_figure(E, V0, L):
                 label="▶ Play",
                 method="animate",
                 args=[None, {"frame": {"duration": 70}, "fromcurrent": True}]
-            )],
-            font=dict(color="white", size=14),  # Moved styling here (at updatemenus level)
-            bgcolor="rgba(0,0,0,0.8)"
+            )]
         )],
         sliders=[dict(
             steps=[dict(
@@ -190,11 +231,21 @@ def main():
     st.set_page_config(page_title="3D Quantum Simulator", layout="wide")
     st.title("3D Quantum Tunneling Visualization")
     
+    # --- Probability Plot ---
+    st.subheader("Probability Coefficients")
+    # Use sidebar parameters for probability plot as well.
+    prob_E = st.sidebar.slider("Electron Energy (eV) [Prob.]", 0.1, 10.0, 5.0, 0.1, key="prob_E")
+    prob_V0 = st.sidebar.slider("Barrier Height (eV) [Prob.]", 0.1, 10.0, 1.0, 0.1, key="prob_V0")
+    prob_L = st.sidebar.slider("Barrier Width (nm) [Prob.]", 0.1, 5.0, 1.0, 0.1, key="prob_L")
+    prob_fig = create_probability_plot(prob_E, prob_V0, prob_L)
+    st.plotly_chart(prob_fig, use_container_width=True)
+    
+    # --- Simulation Parameters ---
     with st.sidebar:
         st.header("Simulation Parameters")
-        E = st.slider("Electron Energy (eV)", 0.1, 10.0, 5.0, 0.1)
-        V0 = st.slider("Barrier Height (eV)", 0.1, 10.0, 1.0, 0.1)
-        L = st.slider("Barrier Width (nm)", 0.1, 5.0, 1.0, 0.1)
+        E = st.slider("Electron Energy (eV)", 0.1, 10.0, 5.0, 0.1, key="E")
+        V0 = st.slider("Barrier Height (eV)", 0.1, 10.0, 1.0, 0.1, key="V0")
+        L = st.slider("Barrier Width (nm)", 0.1, 5.0, 1.0, 0.1, key="L")
     
     with st.spinner('Generating quantum simulation...'):
         fig = create_3d_figure(E, V0, L)
