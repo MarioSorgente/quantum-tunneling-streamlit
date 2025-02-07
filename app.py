@@ -1,4 +1,6 @@
 import streamlit as st
+st.set_page_config(page_title="3D Quantum Simulator", layout="wide")
+
 import numpy as np
 import plotly.graph_objects as go
 
@@ -99,7 +101,7 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
     p2 = int(_n_frames * 2/3)  # e.g. 30 frames for barrier crossing
     for i, outcome in enumerate(outcomes):
         traj = np.zeros((_n_frames, 3))
-        # Offsets for each electron
+        # Offsets for each electron to avoid overlap
         offset_y = (i - (num_electrons - 1) / 2) * 0.3
         offset_z = (i - (num_electrons - 1) / 2) * 0.3
         # Phase 1: Approach from x = -2 to 0.
@@ -128,9 +130,21 @@ def simulate_trajectories(E, V0, L, _n_frames=n_frames):
         trajectories.append(traj)
     return np.array(trajectories), outcomes, T
 
-# ================================
-# Create a 3D Figure with Fading Trails and Persistent Barrier
-# ================================
+def create_probability_plot(E, V0, L):
+    """Create a simple bar chart showing the T coefficient."""
+    T_val = calculate_T(E, V0, L)
+    fig = go.Figure(data=[
+        go.Bar(name="T (Transmission)", x=["T"], y=[T_val], marker_color="#4CAF50")
+    ])
+    fig.update_layout(
+        title="Transmission Coefficient",
+        yaxis=dict(range=[0, 1], title="T"),
+        plot_bgcolor="rgba(240,240,240,0.8)",
+        paper_bgcolor="rgba(240,240,240,0.8)",
+        font=dict(size=14)
+    )
+    return fig
+
 def create_3d_figure(E, V0, L):
     """Create a 3D Plotly figure for the quantum simulation with fading trails."""
     trajectories, outcomes, T_val = simulate_trajectories(E, V0, L)
@@ -180,13 +194,13 @@ def create_3d_figure(E, V0, L):
         base_traces.extend([trail_trace, current_trace])
     fig = go.Figure(data=base_traces)
     
-    # --- Build animation frames ---
+    # --- Build animation frames with fading trails ---
     frames = []
     for k in range(n_frames):
-        frame_data = [barrier_trace]  # always include the barrier trace
+        frame_data = [barrier_trace]  # always include the barrier
         for i in range(num_electrons):
             traj = trajectories[i]
-            # Trail: from the start up to frame k (with low opacity).
+            # Trail: all points up to frame k (faded)
             trail = go.Scatter3d(
                 x=traj[:k, 0],
                 y=traj[:k, 1],
@@ -196,7 +210,7 @@ def create_3d_figure(E, V0, L):
                 opacity=0.3,
                 showlegend=False
             )
-            # Current: the last point at frame k (full opacity).
+            # Current: last point at frame k (full opacity)
             current = go.Scatter3d(
                 x=[traj[k, 0]],
                 y=[traj[k, 1]],
@@ -210,7 +224,7 @@ def create_3d_figure(E, V0, L):
         frames.append(go.Frame(data=frame_data, name=str(k)))
     fig.frames = frames
     
-    # --- Update layout with improved design ---
+    # --- Update layout with improved play button and slider positioning ---
     fig.update_layout(
         title=dict(
             text=f"Quantum Tunneling Simulation<br>E={E:.1f} eV, V₀={V0:.1f} eV, T={T_val:.3f}",
@@ -230,7 +244,7 @@ def create_3d_figure(E, V0, L):
             type="buttons",
             showactive=False,
             y=0.9,
-            x=1.1,  # Positioned to avoid legend
+            x=1.1,  # Positioned to avoid the legend.
             xanchor="right",
             yanchor="top",
             pad=dict(t=0, r=10),
@@ -260,11 +274,7 @@ def create_3d_figure(E, V0, L):
     
     return fig
 
-# ================================
-# Main App
-# ================================
 def main():
-    st.set_page_config(page_title="3D Quantum Simulator", layout="wide")
     st.title("3D Quantum Tunneling Visualization")
     
     # --- Transmission Coefficient Card ---
@@ -286,6 +296,11 @@ def main():
         E = st.slider("Electron Energy (eV)", 0.1, 10.0, 5.0, 0.1, key="E")
         V0 = st.slider("Barrier Height (eV)", 0.1, 10.0, 1.0, 0.1, key="V0")
         L = st.slider("Barrier Width (nm)", 0.1, 5.0, 1.0, 0.1, key="L")
+    
+    # --- Probability Plot ---
+    st.subheader("Transmission Coefficient Plot")
+    prob_fig = create_probability_plot(E, V0, L)
+    st.plotly_chart(prob_fig, use_container_width=True)
     
     with st.spinner('Generating quantum simulation...'):
         fig = create_3d_figure(E, V0, L)
