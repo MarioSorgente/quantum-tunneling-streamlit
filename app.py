@@ -1,45 +1,33 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-import streamlit.components.v1 as components
-import matplotlib.patheffects as pe
+import plotly.graph_objects as go
 
 # =============================================================================
-# Custom CSS for a clean, minimalistic (Apple-like) design
+# Custom CSS for a Clean, Minimalistic (Apple-Like) Look
 # =============================================================================
 st.markdown(
     """
     <style>
-    /* Main container styling */
+    /* Main container */
     .reportview-container .main .block-container {
         padding: 2rem 1rem;
         background-color: #ffffff;
         border-radius: 10px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
-    /* Sidebar styling */
+    /* Sidebar */
     .sidebar .sidebar-content {
-        background-color: #f8f8f8;
+        background-color: #f2f2f2;
+        padding: 1rem;
+        border-radius: 10px;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Use Helvetica/Arial fonts for a modern feel
-plt.rcParams.update({
-    "font.family": "Helvetica",
-    "font.size": 12,
-    "axes.edgecolor": "#CCCCCC",
-    "grid.color": "#E5E5E5",
-    "grid.linestyle": "--",
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
-
 # =============================================================================
-# Physical Constants and Settings
+# Physical Constants and Simulation Settings
 # =============================================================================
 hbar = 1.0545718e-34          # Reduced Planck constant (J·s)
 m_e = 9.10938356e-31          # Electron mass (kg)
@@ -47,144 +35,210 @@ e_charge = 1.602176634e-19    # Elementary charge (C)
 num_electrons = 5             # Number of electrons in the ensemble
 
 # =============================================================================
-# QuantumEnsemble Class: Contains Methods for Calculations & Animation
+# Transmission Calculation Function
 # =============================================================================
-class QuantumEnsemble:
-    def __init__(self):
-        pass
+def transmission(E_eV, V0, L_nm):
+    """
+    Compute the transmission coefficient for a rectangular barrier.
+    E_eV and V0 are in eV; L_nm is in nm.
+    """
+    E = E_eV * e_charge
+    V0_j = V0 * e_charge
+    L = L_nm * 1e-9
+    if E < V0_j:
+        kappa = np.sqrt(2 * m_e * (V0_j - E)) / hbar
+        T = 1 / (1 + (V0**2 * np.sinh(kappa * L)**2) / (4 * E_eV * (V0 - E_eV + 1e-20)))
+    else:
+        k = np.sqrt(2 * m_e * (E - V0_j)) / hbar
+        T = 1 / (1 + (V0**2 * np.sin(k * L)**2) / (4 * E_eV * (E_eV - V0 + 1e-20)))
+    return np.clip(T, 0, 1)
 
-    def transmission(self, E_eV, V0, L_nm):
-        """
-        Compute the transmission coefficient for a rectangular barrier.
-        E_eV and V0 are in eV; L_nm is in nm.
-        """
-        E = E_eV * e_charge
-        V0_j = V0 * e_charge
-        L = L_nm * 1e-9
-        if E < V0_j:
-            kappa = np.sqrt(2 * m_e * (V0_j - E)) / hbar
-            T = 1 / (1 + (V0**2 * np.sinh(kappa * L)**2) / (4 * E_eV * (V0 - E_eV + 1e-20)))
+# =============================================================================
+# Trajectory Simulation in 3D
+# =============================================================================
+def simulate_trajectories(E, V0, L, n_frames=50, n1=20, n2=10, n3=20):
+    """
+    Simulate 3D trajectories for a small ensemble of electrons.
+    
+    The simulation is divided into three phases:
+      - Phase 1 (frames 0 to n1): Brownian motion starting at x = -2*L.
+      - Phase 2 (frames n1 to n1+n2): Drift toward the barrier (from x = -0.5*L to x = 0).
+      - Phase 3 (frames n1+n2 to n_frames): After the barrier, electrons either
+         tunnel (transmitted: from 0 to 2*L) or are reflected (from 0 to -L).
+         
+    Returns a list of trajectories (one per electron), a list of outcomes (True for transmitted),
+    and the calculated transmission probability.
+    """
+    T_val = transmission(E, V0, L)
+    outcomes = np.random.rand(num_electrons) < T_val
+    trajectories = []
+    for i in range(num_electrons):
+        traj = np.zeros((n_frames, 3))  # columns: x, y, z (all in nm)
+        # Phase 1: Brownian motion (from x = -2L to -0.5L)
+        x_start = -2 * L
+        x_a = -0.5 * L
+        for t in range(n1):
+            x = x_start + (x_a - x_start) * t / (n1 - 1) + np.random.normal(0, 0.1 * L)
+            y = np.random.normal(0, 0.2)
+            z = np.random.normal(0, 0.2)
+            traj[t] = [x, y, z]
+        # Phase 2: Approach barrier (from -0.5L to 0)
+        for t in range(n1, n1 + n2):
+            x = x_a + (0 - x_a) * (t - n1) / (n2 - 1) + np.random.normal(0, 0.05 * L)
+            y = np.random.normal(0, 0.1)
+            z = np.random.normal(0, 0.1)
+            traj[t] = [x, y, z]
+        # Phase 3: After barrier
+        if outcomes[i]:
+            # Transmitted: move from 0 to 2L
+            for t in range(n1 + n2, n_frames):
+                x = 0 + (2 * L - 0) * (t - (n1 + n2)) / (n3 - 1) + np.random.normal(0, 0.1 * L)
+                y = np.random.normal(0, 0.1)
+                z = np.random.normal(0, 0.1)
+                traj[t] = [x, y, z]
         else:
-            k = np.sqrt(2 * m_e * (E - V0_j)) / hbar
-            T = 1 / (1 + (V0**2 * np.sin(k * L)**2) / (4 * E_eV * (E_eV - V0 + 1e-20)))
-        return np.clip(T, 0, 1)
-
-    def create_transmission_plot(self, E, V0, L):
-        """
-        Generate a plot of transmission probability vs. electron energy.
-        """
-        fig, ax = plt.subplots(figsize=(8, 5))
-        E_range = np.linspace(0.1, 10, 200)
-        T_vals = [self.transmission(e, V0, L) for e in E_range]
-        ax.plot(E_range, T_vals, 'b-', lw=2)
-        ax.axvline(E, color='r', ls=':', lw=2, alpha=0.8)
-        T_val = self.transmission(E, V0, L)
-        ax.text(0.95, 0.9, f"T = {T_val:.3f}", transform=ax.transAxes,
-                ha='right', va='top', fontsize=14,
-                bbox=dict(facecolor='white', edgecolor='#CCCCCC', alpha=0.8))
-        ax.set_title(f"Electron Energy = {E:.2f} eV  |  Barrier Height = {V0:.2f} eV  |  Barrier Width = {L:.2f} nm", fontsize=16)
-        ax.set_xlabel("Energy (eV)", fontsize=14)
-        ax.set_ylabel("Transmission Probability", fontsize=14)
-        ax.grid(alpha=0.3)
-        ax.set_ylim(0, 1.1)
-        return fig
-
-    def create_animation(self, E, V0, L):
-        """
-        Create a 2D animation of electrons approaching a barrier.
-        Transmitted electrons (green) continue forward;
-        reflected electrons (red) bounce back.
-        """
-        # Create figure for animation
-        fig, ax = plt.subplots(figsize=(8, 2))
-        # Set x-axis from -L to 2L (nm)
-        ax.set_xlim(-L, 2 * L)
-        ax.set_ylim(0, 1)
-        ax.set_xlabel("Position (nm)", fontsize=12)
-        ax.set_yticks([])
-
-        # Draw the barrier with a subtle shadow effect
-        barrier_shadow = plt.Rectangle((0.05, 0.22), L, 0.6, fc='gray', alpha=0.2, ec='none')
-        ax.add_patch(barrier_shadow)
-        barrier_rect = plt.Rectangle((0, 0.2), L, 0.6, fc='gray', alpha=0.4, ec='#CCCCCC', lw=1.5)
-        ax.add_patch(barrier_rect)
-        ax.text(L/2, 0.85, f"Barrier: {L:.2f} nm", ha="center", va="bottom", fontsize=12, color="black")
-
-        # Calculate transmission probability and randomly decide outcomes
-        T_val = self.transmission(E, V0, L)
-        np.random.seed()  # fresh randomness each update
-        outcomes = np.random.rand(num_electrons) < T_val
-        # Colors: transmitted = green, reflected = red.
-        colors = ['#4CAF50' if outcome else '#F44336' for outcome in outcomes]
-        y_positions = np.linspace(0.3, 0.7, num_electrons)
-
-        # Define trajectories (in nm) for each electron
-        N1 = 25  # approach: from -L to 0
-        N2 = 15  # crossing: from 0 to L
-        N3 = 25  # final: transmitted (L to 2L) or reflected (0 to -L)
-        x_trajectories = []
-        for outcome in outcomes:
-            approach = np.linspace(-L, 0, N1)
-            barrier = np.linspace(0, L, N2)
-            if outcome:
-                final = np.linspace(L, 2 * L, N3)
-            else:
-                final = np.linspace(0, -L, N3)
-            trajectory = np.concatenate([approach, barrier, final])
-            x_trajectories.append(trajectory)
-
-        max_frames = max(len(traj) for traj in x_trajectories)
-        electrons = []
-        for color in colors:
-            point, = ax.plot([], [], 'o', markersize=12, color=color, alpha=0.9)
-            # Add a shadow to the electron marker
-            point.set_path_effects([pe.withStroke(linewidth=3, foreground='black')])
-            electrons.append(point)
-
-        def animate(frame):
-            for i, (electron, traj) in enumerate(zip(electrons, x_trajectories)):
-                x = traj[frame] if frame < len(traj) else traj[-1]
-                electron.set_data([x], [y_positions[i]])
-            return electrons
-
-        anim = FuncAnimation(fig, animate, frames=max_frames, interval=40, blit=True)
-        plt.close(fig)
-        return anim.to_jshtml()
+            # Reflected: move from 0 to -L
+            for t in range(n1 + n2, n_frames):
+                x = 0 - (L - 0) * (t - (n1 + n2)) / (n3 - 1) + np.random.normal(0, 0.1 * L)
+                y = np.random.normal(0, 0.1)
+                z = np.random.normal(0, 0.1)
+                traj[t] = [x, y, z]
+        trajectories.append(traj)
+    return trajectories, outcomes, T_val
 
 # =============================================================================
-# Main Function: Set Up the Streamlit App Layout
+# Create 3D Animation Figure with Plotly
+# =============================================================================
+def create_3d_figure(E, V0, L):
+    """
+    Create a 3D animated Plotly figure showing electron trajectories and the barrier.
+    """
+    n_frames = 50
+    trajectories, outcomes, T_val = simulate_trajectories(E, V0, L, n_frames=n_frames)
+    
+    # Create one trace per electron (each trace is a single moving point)
+    traces = []
+    for i in range(num_electrons):
+        color = '#4CAF50' if outcomes[i] else '#F44336'
+        traj = trajectories[i]
+        trace = go.Scatter3d(
+            x=[traj[0, 0]],
+            y=[traj[0, 1]],
+            z=[traj[0, 2]],
+            mode='markers',
+            marker=dict(size=8, color=color, opacity=0.95),
+            name=f'Electron {i+1}'
+        )
+        traces.append(trace)
+    
+    # Build animation frames: one frame per time step
+    frames = []
+    for frame_idx in range(n_frames):
+        frame_data = []
+        for i in range(num_electrons):
+            traj = trajectories[i]
+            frame_data.append(dict(
+                x=[traj[frame_idx, 0]],
+                y=[traj[frame_idx, 1]],
+                z=[traj[frame_idx, 2]]
+            ))
+        frames.append(dict(data=frame_data, name=str(frame_idx)))
+    
+    # Create a 3D barrier as a cuboid (using Mesh3d)
+    # Barrier vertices (cuboid from x=0 to x=L, y from -1 to 1, z from -1 to 1)
+    X = [0, 0, 0, 0, L, L, L, L]
+    Y = [-1, -1, 1, 1, -1, -1, 1, 1]
+    Z = [-1, 1, -1, 1, -1, 1, -1, 1]
+    # Define the faces via indices (two triangles per face)
+    i_faces = [0, 0, 0, 1, 1, 2, 4, 4, 5, 6, 6, 7]
+    j_faces = [1, 2, 4, 2, 4, 3, 5, 6, 6, 7, 5, 5]
+    k_faces = [2, 4, 5, 4, 5, 7, 6, 7, 7, 7, 5, 3]
+    barrier_mesh = go.Mesh3d(
+        x=X,
+        y=Y,
+        z=Z,
+        color='gray',
+        opacity=0.3,
+        flatshading=True,
+        i=i_faces,
+        j=j_faces,
+        k=k_faces,
+        name='Barrier'
+    )
+    
+    # Create base figure with the electron traces and barrier
+    fig = go.Figure(
+        data=traces + [barrier_mesh],
+        layout=go.Layout(
+            title=f"3D Electron Journey (E = {E:.2f} eV, V₀ = {V0:.2f} eV, L = {L:.2f} nm, T = {T_val:.3f})",
+            scene=dict(
+                xaxis=dict(title="X Position (nm)", backgroundcolor="white", gridcolor="#E5E5E5"),
+                yaxis=dict(title="Y Position (nm)", backgroundcolor="white", gridcolor="#E5E5E5"),
+                zaxis=dict(title="Z Position (nm)", backgroundcolor="white", gridcolor="#E5E5E5"),
+                aspectmode='data'
+            ),
+            updatemenus=[dict(
+                type="buttons",
+                showactive=False,
+                y=1,
+                x=1.05,
+                xanchor="right",
+                yanchor="top",
+                pad=dict(t=0, r=10),
+                buttons=[dict(label="Play",
+                              method="animate",
+                              args=[None, {"frame": {"duration": 80, "redraw": True},
+                                           "fromcurrent": True, "transition": {"duration": 0}}])]
+            )]
+        )
+    )
+    
+    fig.frames = frames
+    # (Optional) Add a slider to manually control the frame.
+    sliders = [dict(
+        steps=[dict(method="animate",
+                    args=[[str(k)],
+                          {"frame": {"duration": 80, "redraw": True},
+                           "mode": "immediate",
+                           "transition": {"duration": 0}}],
+                    label=str(k))
+               for k in range(n_frames)],
+        active=0,
+        transition={"duration": 0},
+        x=0,  # slider starting position  
+        y=0,  
+        currentvalue=dict(font=dict(size=12), prefix="Frame: ", visible=True, xanchor='center'),
+        len=1.0
+    )]
+    fig.update_layout(sliders=sliders)
+    return fig
+
+# =============================================================================
+# Main Streamlit App
 # =============================================================================
 def main():
-    st.title("Electron Journey Simulator")
+    st.title("3D Electron Journey Simulator")
     st.markdown(
         """
-        Welcome to the Electron Journey Simulator!
+        **Welcome!**  
+        Watch as electrons—displayed in a modern 3D view with natural Brownian motion—approach a barrier.
+        Some tunnel through (green) while others are reflected (red).
         
-        **What’s happening?**  
-        Electrons are sent toward a barrier. Some manage to tunnel through (green) while others are reflected (red).  
-        
-        **How to play:**  
-        - Use the sliders in the sidebar to adjust the electron energy and the barrier properties.  
-        - The top panel shows how likely the electrons are to pass through.  
-        - The bottom panel animates the journey in a fun 2D view.
+        **How to Play:**  
+        Use the sliders in the sidebar to adjust the electron energy, barrier height, and barrier width.
+        The barrier is shown as a translucent block, and the simulation updates in real time.
         """
     )
-
-    # Sidebar: Organized simulation settings
-    st.sidebar.markdown("## Simulation Settings")
+    
+    # Sidebar: Simulation Settings (no overlap in parameters)
+    st.sidebar.markdown("### Simulation Settings")
     E = st.sidebar.slider("Electron Energy (eV)", 0.1, 10.0, 5.0, step=0.1)
     V0 = st.sidebar.slider("Barrier Height (eV)", 0.1, 10.0, 1.0, step=0.1)
     L = st.sidebar.slider("Barrier Width (nm)", 0.1, 5.0, 1.0, step=0.1)
-
-    ensemble = QuantumEnsemble()
-
-    # Top Panel: Transmission Probability Plot
-    fig = ensemble.create_transmission_plot(E, V0, L)
-    st.pyplot(fig)
-
-    # Bottom Panel: 2D Animation of the Electron Journey
-    animation_html = ensemble.create_animation(E, V0, L)
-    components.html(animation_html, height=400)
+    
+    # Generate and display the 3D animated figure
+    fig = create_3d_figure(E, V0, L)
+    st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == '__main__':
     main()
